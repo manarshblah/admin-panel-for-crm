@@ -1,0 +1,5 @@
+{
+  "name": "Super Admin Panel",
+  "description": "A comprehensive Super Admin Panel for managing tenants, subscriptions, billing, reports, and system settings in a multi-tenant SaaS application. It features a dashboard with key metrics, detailed management tables, reporting tools, and system configuration options, all with a modern UI and dark mode support.",
+  "requestFramePermissions": []
+}
