@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Icon from '../components/Icon';
 import { AdminUser, AuditLog as AuditLogType, BackupLog } from '../types';
 import { useI18n } from '../context/i18n';
@@ -7,11 +7,7 @@ import { useTheme } from '../context/ThemeContext';
 import AdminUserModal from '../components/AdminUserModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuditLog } from '../context/AuditLogContext';
-
-const mockAdmins: AdminUser[] = [
-    { id: 1, name: 'Super Admin 1', email: 'admin1@system.com', role: 'Super Admin' },
-    { id: 2, name: 'Super Admin 2', email: 'admin2@system.com', role: 'Super Admin' },
-];
+import { getUsersAPI } from '../services/api';
 
 const mockBackupLogs: BackupLog[] = [
     { id: 'backup-1698058200000', date: new Date('2023-10-23T10:50:00'), status: 'Completed', initiator: 'Manual' },
@@ -25,7 +21,7 @@ const mockBackupLogs: BackupLog[] = [
 
 const GeneralSettings: React.FC = () => {
     const { t } = useI18n();
-    const { primaryColor, setPrimaryColor, logoUrl, setLogoUrl } = useTheme();
+    const { logoUrl, setLogoUrl } = useTheme();
     const { addLog } = useAuditLog();
 
     const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -53,24 +49,6 @@ const GeneralSettings: React.FC = () => {
             <div>
                 <label className="block text-sm font-medium mb-1">{t('settings.general.platformName')}</label>
                 <input type="text" defaultValue="MySaaS Platform" className="w-full max-w-lg px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"/>
-            </div>
-             <div>
-                <label className="block text-sm font-medium mb-1">{t('settings.general.primaryColor')}</label>
-                <div className="flex items-center space-x-2 max-w-lg">
-                    <input 
-                        type="color" 
-                        value={primaryColor}
-                        onChange={(e) => setPrimaryColor(e.target.value)}
-                        className="w-10 h-10 border border-gray-300 rounded-md cursor-pointer dark:border-gray-600 p-0"
-                        style={{ appearance: 'none', padding: 0 }}
-                    />
-                    <input 
-                        type="text" 
-                        value={primaryColor}
-                        onChange={(e) => setPrimaryColor(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
-                    />
-                </div>
             </div>
             <div>
                 <label className="block text-sm font-medium mb-1">{t('settings.general.platformLogo')}</label>
@@ -222,7 +200,7 @@ const SecurityBackups: React.FC = () => {
              <div className="border-t border-gray-200 dark:border-gray-700 pt-6 space-y-4">
                 <h4 className="text-lg font-semibold">{t('settings.security.historyTitle')}</h4>
                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+                    <table className={`w-full text-sm ${language === 'ar' ? 'text-right' : 'text-left'} text-gray-500 dark:text-gray-400`}>
                         <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
                             <tr>
                                 <th scope="col" className="px-6 py-3">{t('settings.security.table.id')}</th>
@@ -281,7 +259,8 @@ interface AdminUsersProps {
 }
 
 const AdminUsers: React.FC<AdminUsersProps> = ({ admins, onAdd, onDelete }) => {
-    const { t } = useI18n();
+    const { t, language } = useI18n();
+    const [isLoading, setIsLoading] = useState(false);
 
     const handleDelete = (id: number) => {
         if (window.confirm(t('settings.admins.deleteConfirm'))) {
@@ -299,31 +278,47 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ admins, onAdd, onDelete }) => {
                 </button>
             </div>
             <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+                <table className={`w-full text-sm ${language === 'ar' ? 'text-right' : 'text-left'} text-gray-500 dark:text-gray-400`}>
                     <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
                         <tr>
                             <th className="px-6 py-3">{t('settings.admins.table.name')}</th>
                             <th className="px-6 py-3">{t('settings.admins.table.email')}</th>
+                            <th className="px-6 py-3">{t('settings.admins.table.role')}</th>
                             <th className="px-6 py-3">{t('settings.admins.table.actions')}</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {admins.map(admin => (
-                            <tr key={admin.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-                                <td className="px-6 py-4">{admin.name}</td>
-                                <td className="px-6 py-4">{admin.email}</td>
-                                <td className="px-6 py-4">
-                                    <button
-                                        onClick={() => handleDelete(admin.id)}
-                                        className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        disabled={admins.length <= 1}
-                                        title={admins.length <= 1 ? "Cannot delete the only admin" : "Delete"}
-                                    >
-                                        <Icon name="trash" className="w-5 h-5"/>
-                                    </button>
+                        {isLoading ? (
+                            <tr>
+                                <td colSpan={4} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                                    Loading admins...
                                 </td>
                             </tr>
-                        ))}
+                        ) : admins.length === 0 ? (
+                            <tr>
+                                <td colSpan={4} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                                    No admin users found
+                                </td>
+                            </tr>
+                        ) : (
+                            admins.map(admin => (
+                                <tr key={admin.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
+                                    <td className="px-6 py-4">{admin.name}</td>
+                                    <td className="px-6 py-4">{admin.email}</td>
+                                    <td className="px-6 py-4">{admin.role}</td>
+                                    <td className="px-6 py-4">
+                                        <button
+                                            onClick={() => handleDelete(admin.id)}
+                                            className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            disabled={admins.length <= 1}
+                                            title={admins.length <= 1 ? "Cannot delete the only admin" : "Delete"}
+                                        >
+                                            <Icon name="trash" className="w-5 h-5"/>
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
                     </tbody>
                 </table>
             </div>
@@ -395,13 +390,43 @@ const AuditLog: React.FC = () => {
 )};
 
 const SystemSettings: React.FC = () => {
-    const { t } = useI18n();
+    const { t, language } = useI18n();
     const { addLog } = useAuditLog();
     const [activeSetting, setActiveSetting] = useState('general');
-    const [admins, setAdmins] = useState<AdminUser[]>(mockAdmins);
+    const [admins, setAdmins] = useState<AdminUser[]>([]);
     const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+    const [isLoadingAdmins, setIsLoadingAdmins] = useState(true);
+
+    useEffect(() => {
+        loadAdmins();
+    }, []);
+
+    const loadAdmins = async () => {
+        setIsLoadingAdmins(true);
+        try {
+            const response = await getUsersAPI({ search: 'admin' }); // Filter for admin users
+            // API returns users with fields: id, username, email, first_name, last_name, role
+            const adminUsers: AdminUser[] = (response.results || [])
+                .filter((user: any) => user.role === 'super_admin' || user.role === 'admin') // Filter super admins
+                .map((user: any) => ({
+                    id: user.id, // API field: id
+                    name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username, // API fields: first_name, last_name, username
+                    email: user.email, // API field: email
+                    role: user.role === 'super_admin' ? 'Super Admin' : 'Admin', // API field: role
+                }));
+            setAdmins(adminUsers);
+        } catch (error) {
+            console.error('Error loading admin users:', error);
+            // Fallback to empty array on error
+            setAdmins([]);
+        } finally {
+            setIsLoadingAdmins(false);
+        }
+    };
 
     const handleAddAdmin = ({ name, email }: { name: string; email: string }) => {
+        // TODO: Create admin user via API when endpoint is available
+        // For now, this is a placeholder
         const newAdmin: AdminUser = {
             id: admins.length > 0 ? Math.max(...admins.map(a => a.id)) + 1 : 1,
             name,
@@ -414,6 +439,7 @@ const SystemSettings: React.FC = () => {
     };
 
     const handleDeleteAdmin = (adminId: number) => {
+        // TODO: Delete admin user via API when endpoint is available
         setAdmins(prevAdmins => prevAdmins.filter(admin => admin.id !== adminId));
         addLog('audit.log.adminDeleted', { adminId });
     };
@@ -445,7 +471,7 @@ const SystemSettings: React.FC = () => {
                             <button
                                 key={item.id}
                                 onClick={() => setActiveSetting(item.id)}
-                                className={`w-full text-right px-3 py-2 rounded-md text-sm font-medium ${
+                                className={`w-full ${language === 'ar' ? 'text-right' : 'text-left'} px-3 py-2 rounded-md text-sm font-medium ${
                                     activeSetting === item.id 
                                     ? 'bg-primary-600 text-white dark:bg-primary-700 dark:text-white' 
                                     : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`

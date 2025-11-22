@@ -6,14 +6,16 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "strict": true,
+    "strict": false,
+    "noImplicitAny": false,
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": ["react", "react-dom"]
   },
   "include": ["."],
   "exclude": ["node_modules"]

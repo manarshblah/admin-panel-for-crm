@@ -9,27 +9,100 @@ import Reports from './pages/Reports';
 import Communication from './pages/Communication';
 import SystemSettings from './pages/SystemSettings';
 import LoginPage from './pages/LoginPage';
-import AddTenant from './pages/AddTenant';
 import PaymentGateways from './pages/PaymentGateways';
 import { Page, Tenant, TenantStatus } from './types';
 import { useAuditLog } from './context/AuditLogContext';
+import { useI18n } from './context/i18n';
 import FullPageLoader from './components/FullPageLoader';
-
-const mockTenants: Tenant[] = [
-    { id: 1, companyName: 'Tech Solutions Inc.', subdomain: 'techsolutions.platform.com', currentPlan: 'الذهبية', status: TenantStatus.Active, startDate: '2023-01-15', endDate: '2024-01-15', users: '8/10' },
-    { id: 2, companyName: 'Innovate Co.', subdomain: 'innovate.platform.com', currentPlan: 'التجريبية', status: TenantStatus.Trial, startDate: '2023-10-01', endDate: '2023-10-31', users: '3/5' },
-    { id: 3, companyName: 'Data Systems', subdomain: 'datasys.platform.com', currentPlan: 'الفضية', status: TenantStatus.Expired, startDate: '2022-09-20', endDate: '2023-09-20', users: '5/5' },
-    { id: 4, companyName: 'Creative Minds', subdomain: 'creative.platform.com', currentPlan: 'المجانية', status: TenantStatus.Deactivated, startDate: '2023-05-10', endDate: 'N/A', users: '1/2' },
-    { id: 5, companyName: 'Future Forward', subdomain: 'future.platform.com', currentPlan: 'الذهبية', status: TenantStatus.Active, startDate: '2023-03-01', endDate: '2024-03-01', users: '10/10' },
-];
+import { getCompaniesAPI, getSubscriptionsAPI, createCompanyAPI, updateCompanyAPI, deleteCompanyAPI } from './services/api';
 
 const App: React.FC = () => {
+  const { language } = useI18n();
   const [activePage, setActivePage] = useState<Page>('Dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => sessionStorage.getItem('isAuthenticated') === 'true');
-  const [tenants, setTenants] = useState<Tenant[]>(mockTenants);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const hasToken = localStorage.getItem('accessToken');
+    const sessionAuth = sessionStorage.getItem('isAuthenticated') === 'true';
+    return !!(hasToken || sessionAuth);
+  });
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [isLoadingTenants, setIsLoadingTenants] = useState(false);
   const { addLog } = useAuditLog();
   const [isPageLoading, setIsPageLoading] = useState(false);
+
+  // Fetch tenants from API
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadTenants();
+    }
+  }, [isAuthenticated]);
+
+  const loadTenants = async () => {
+    setIsLoadingTenants(true);
+    try {
+      // Fetch companies and subscriptions
+      const [companiesResponse, subscriptionsResponse] = await Promise.all([
+        getCompaniesAPI(),
+        getSubscriptionsAPI()
+      ]);
+
+      const companies = companiesResponse.results || [];
+      const subscriptions = subscriptionsResponse.results || [];
+
+      // Create a map of company_id -> active subscription
+      const subscriptionMap = new Map();
+      subscriptions.forEach((sub: any) => {
+        if (sub.is_active && (!subscriptionMap.has(sub.company) || 
+            new Date(sub.end_date) > new Date(subscriptionMap.get(sub.company)?.end_date || 0))) {
+          subscriptionMap.set(sub.company, sub);
+        }
+      });
+
+      // Map companies to tenants using API field names
+      const mappedTenants: Tenant[] = companies.map((company: any) => {
+        const subscription = subscriptionMap.get(company.id);
+        const endDate = subscription?.end_date 
+          ? new Date(subscription.end_date).toISOString().split('T')[0]
+          : 'N/A';
+        const startDate = subscription?.start_date
+          ? new Date(subscription.start_date).toISOString().split('T')[0]
+          : company.created_at ? new Date(company.created_at).toISOString().split('T')[0] : 'N/A';
+
+        // Determine status based on API subscription data
+        let status = TenantStatus.Deactivated;
+        if (subscription) {
+          if (subscription.is_active) {
+            const now = new Date();
+            const end = new Date(subscription.end_date);
+            if (end < now) {
+              status = TenantStatus.Expired;
+            } else {
+              status = TenantStatus.Active;
+            }
+          } else {
+            status = TenantStatus.Deactivated;
+          }
+        }
+
+        return {
+          id: company.id,
+          companyName: company.name, // API field: name
+          subdomain: company.domain || `${company.name.toLowerCase().replace(/\s+/g, '')}.platform.com`, // API field: domain
+          currentPlan: subscription?.plan_name || '', // From subscription relation - will be translated in component
+          status: status,
+          startDate: startDate,
+          endDate: endDate,
+          users: '0/0', // TODO: Get actual user count from API
+        };
+      });
+
+      setTenants(mappedTenants);
+    } catch (error) {
+      console.error('Error loading tenants:', error);
+    } finally {
+      setIsLoadingTenants(false);
+    }
+  };
 
 
   useEffect(() => {
@@ -45,44 +118,71 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     sessionStorage.removeItem('isAuthenticated');
+    localStorage.removeItem('isAuthenticated');
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
     setIsAuthenticated(false);
   };
 
-  const handleSaveTenant = (newTenant: Omit<Tenant, 'id'>) => {
-      const tenantWithId: Tenant = {
-          id: tenants.length > 0 ? Math.max(...tenants.map(t => t.id)) + 1 : 1,
-          ...newTenant
+  const handleSaveTenant = async (newTenant: Omit<Tenant, 'id'>) => {
+    try {
+      // Use API field names: name, domain, specialization
+      const companyData = {
+        name: newTenant.companyName, // API expects 'name'
+        domain: newTenant.subdomain.replace('.platform.com', ''), // Remove domain suffix if present
+        specialization: 'real_estate', // Default, can be made configurable
       };
-      setTenants(prevTenants => [tenantWithId, ...prevTenants]);
-      addLog('audit.log.tenantCreated', { companyName: tenantWithId.companyName });
+
+      const createdCompany = await createCompanyAPI(companyData);
+      addLog('audit.log.tenantCreated', { companyName: newTenant.companyName });
+      
+      // Reload tenants to get updated list
+      await loadTenants();
       setActivePage('Tenants');
+    } catch (error: any) {
+      console.error('Error creating tenant:', error);
+      alert(error.message || 'Failed to create tenant');
+    }
   };
   
-  const handleUpdateTenant = (updatedTenant: Tenant) => {
-    setTenants(prevTenants => prevTenants.map(t => t.id === updatedTenant.id ? updatedTenant : t));
-    addLog('audit.log.tenantUpdated', { companyName: updatedTenant.companyName });
+  const handleUpdateTenant = async (updatedTenant: Tenant) => {
+    try {
+      // Use API field names: name, domain, specialization
+      const companyData = {
+        name: updatedTenant.companyName, // API expects 'name'
+        domain: updatedTenant.subdomain.replace('.platform.com', ''), // Remove domain suffix if present
+        specialization: 'real_estate', // Default, can be made configurable
+      };
+
+      await updateCompanyAPI(updatedTenant.id, companyData);
+      addLog('audit.log.tenantUpdated', { companyName: updatedTenant.companyName });
+      
+      // Reload tenants to get updated list
+      await loadTenants();
+    } catch (error: any) {
+      console.error('Error updating tenant:', error);
+      alert(error.message || 'Failed to update tenant');
+    }
   };
 
   const renderPage = () => {
     switch (activePage) {
       case 'Dashboard':
-        return <Dashboard />;
+        return <Dashboard key={language} />;
       case 'Tenants':
-        return <Tenants tenants={tenants} setActivePage={setActivePage} onUpdateTenant={handleUpdateTenant} />;
-      case 'AddTenant':
-        return <AddTenant onSave={handleSaveTenant} setActivePage={setActivePage} />;
+        return <Tenants key={language} tenants={tenants} setActivePage={setActivePage} onUpdateTenant={handleUpdateTenant} isLoading={isLoadingTenants} onRefresh={loadTenants} />;
       case 'Subscriptions':
-        return <Subscriptions tenants={tenants} />;
+        return <Subscriptions key={language} tenants={tenants} />;
       case 'PaymentGateways':
-        return <PaymentGateways />;
+        return <PaymentGateways key={language} />;
       case 'Reports':
-        return <Reports />;
+        return <Reports key={language} />;
       case 'Communication':
-        return <Communication />;
+        return <Communication key={language} />;
       case 'Settings':
-        return <SystemSettings />;
+        return <SystemSettings key={language} />;
       default:
-        return <Dashboard />;
+        return <Dashboard key={language} />;
     }
   };
 

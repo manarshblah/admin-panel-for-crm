@@ -4,6 +4,7 @@ import { useI18n } from '../context/i18n';
 import Icon from '../components/Icon';
 import { Tenant, TenantStatus, Page } from '../types';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { registerCompanyAPI, getCompaniesAPI } from '../services/api';
 
 interface AddTenantProps {
   onSave: (tenant: Omit<Tenant, 'id'>) => void;
@@ -68,22 +69,57 @@ const AddTenant: React.FC<AddTenantProps> = ({ onSave, setActivePage }) => {
       setPassword(newPassword);
   };
   
-  const handleSubmit = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (subdomainStatus !== 'valid') {
           alert(t('tenants.add.subdomainTaken'));
           return;
       }
-      const newTenant: Omit<Tenant, 'id'> = {
-          companyName,
-          subdomain: `${subdomain}.platform.com`,
-          currentPlan: plan,
-          status: plan === 'التجريبية' ? TenantStatus.Trial : TenantStatus.Active,
-          startDate: new Date().toISOString().split('T')[0],
-          endDate: '2025-01-01', // Placeholder
-          users: '1/5', // Placeholder
-      };
-      onSave(newTenant);
+      if (!companyName || !adminName || !adminEmail || !password) {
+          alert('Please fill in all required fields');
+          return;
+      }
+
+      setIsSubmitting(true);
+      try {
+          // Split admin name into first and last name
+          const nameParts = adminName.trim().split(' ');
+          const adminFirstName = nameParts[0] || '';
+          const adminLastName = nameParts.slice(1).join(' ') || '';
+
+          // Use API field names: company_name, domain, specialization, admin_username, admin_email, admin_password
+          const companyData = {
+              company_name: companyName, // API expects 'company_name'
+              domain: subdomain, // API expects 'domain' (without .platform.com)
+              specialization: 'real_estate', // Default specialization
+              admin_username: adminEmail.split('@')[0] || adminName.toLowerCase().replace(/\s+/g, '_'), // Generate username from email
+              admin_email: adminEmail, // API expects 'admin_email'
+              admin_password: password, // API expects 'admin_password'
+              admin_first_name: adminFirstName,
+              admin_last_name: adminLastName,
+          };
+
+          await registerCompanyAPI(companyData);
+          
+          // Create tenant object for callback (will be reloaded from API)
+          const newTenant: Omit<Tenant, 'id'> = {
+              companyName,
+              subdomain: `${subdomain}.platform.com`,
+              currentPlan: plan,
+              status: plan === 'التجريبية' ? TenantStatus.Trial : TenantStatus.Active,
+              startDate: new Date().toISOString().split('T')[0],
+              endDate: '2025-01-01', // Will be set by subscription
+              users: '1/1', // Admin user created
+          };
+          onSave(newTenant);
+      } catch (error: any) {
+          console.error('Error creating tenant:', error);
+          alert(error.message || 'Failed to create tenant. Please check if subdomain is available.');
+      } finally {
+          setIsSubmitting(false);
+      }
   };
 
   const inputClasses = "w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500";
@@ -146,8 +182,15 @@ const AddTenant: React.FC<AddTenantProps> = ({ onSave, setActivePage }) => {
                 <button type="button" onClick={() => setActivePage('Tenants')} className="px-6 py-2 bg-gray-100 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-200 dark:hover:bg-gray-500 font-medium">
                 {t('common.cancel')}
                 </button>
-                <button type="submit" disabled={subdomainStatus !== 'valid'} className="px-6 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 font-medium flex items-center disabled:bg-primary-400 dark:disabled:bg-primary-800 disabled:cursor-not-allowed">
-                    {t('common.createAndSave')}
+                <button type="submit" disabled={subdomainStatus !== 'valid' || isSubmitting} className="px-6 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 font-medium flex items-center disabled:bg-primary-400 dark:disabled:bg-primary-800 disabled:cursor-not-allowed">
+                    {isSubmitting ? (
+                        <>
+                            <LoadingSpinner />
+                            <span className="ml-2">Creating...</span>
+                        </>
+                    ) : (
+                        t('common.createAndSave')
+                    )}
                 </button>
             </div>
         </form>

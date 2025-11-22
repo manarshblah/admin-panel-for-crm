@@ -17,10 +17,12 @@ interface TenantsProps {
     tenants: Tenant[];
     setActivePage: (page: Page) => void;
     onUpdateTenant: (tenant: Tenant) => void;
+    isLoading?: boolean;
+    onRefresh?: () => void;
 }
 
-const Tenants: React.FC<TenantsProps> = ({ tenants, setActivePage, onUpdateTenant }) => {
-    const { t } = useI18n();
+const Tenants: React.FC<TenantsProps> = ({ tenants, setActivePage, onUpdateTenant, isLoading = false, onRefresh }) => {
+    const { t, language } = useI18n();
     const { addLog } = useAuditLog();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
@@ -58,23 +60,28 @@ const Tenants: React.FC<TenantsProps> = ({ tenants, setActivePage, onUpdateTenan
         <div>
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                 <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{t('tenants.title')}</h1>
-                <button onClick={() => setActivePage('AddTenant')} className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700 flex items-center self-start md:self-auto">
-                    <Icon name="plus" className="w-5 h-5 mx-2" />
-                    {t('tenants.add.button')}
-                 </button>
+                {onRefresh && (
+                    <div className="flex gap-2 self-start md:self-auto">
+                        <button 
+                            onClick={onRefresh} 
+                            disabled={isLoading}
+                            className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 flex items-center disabled:opacity-50"
+                        >
+                            <Icon name="refresh" className="w-5 h-5 mx-2" />
+                            {t('common.refresh')}
+                        </button>
+                    </div>
+                )}
             </div>
             
             <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md">
                 <div className="mb-4">
                     <div className="flex flex-col sm:flex-row gap-2">
-                        <input type="text" placeholder={t('tenants.searchPlaceholder')} className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 w-full sm:w-auto"/>
-                        <select className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 w-full sm:w-auto">
+                        <input type="text" dir={language === 'ar' ? 'rtl' : 'ltr'} placeholder={t('tenants.searchPlaceholder')} className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 w-full sm:w-auto"/>
+                        <select dir={language === 'ar' ? 'rtl' : 'ltr'} className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 w-full sm:w-auto">
                             <option>{t('tenants.filterByPlan')}</option>
-                            <option>المجانية</option>
-                            <option>الفضية</option>
-                            <option>الذهبية</option>
                         </select>
-                        <select className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 w-full sm:w-auto">
+                        <select dir={language === 'ar' ? 'rtl' : 'ltr'} className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 w-full sm:w-auto">
                             <option>{t('tenants.filterByStatus')}</option>
                             <option>{t('status.Active')}</option>
                             <option>{t('status.Trial')}</option>
@@ -85,7 +92,7 @@ const Tenants: React.FC<TenantsProps> = ({ tenants, setActivePage, onUpdateTenan
                 </div>
 
                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+                    <table className={`w-full text-sm ${language === 'ar' ? 'text-right' : 'text-left'} text-gray-500 dark:text-gray-400`}>
                         <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
                             <tr>
                                 <th scope="col" className="px-6 py-3">{t('tenants.table.companyName')}</th>
@@ -98,11 +105,24 @@ const Tenants: React.FC<TenantsProps> = ({ tenants, setActivePage, onUpdateTenan
                             </tr>
                         </thead>
                         <tbody>
-                            {tenants.map((tenant) => (
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={7} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                                        {t('tenants.loading')}
+                                    </td>
+                                </tr>
+                            ) : tenants.length === 0 ? (
+                                <tr>
+                                    <td colSpan={7} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                                        {t('tenants.noTenants')}
+                                    </td>
+                                </tr>
+                            ) : (
+                                tenants.map((tenant) => (
                                 <tr key={tenant.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600">
                                     <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap dark:text-white">{tenant.companyName}</td>
                                     <td className="px-6 py-4">{tenant.subdomain}</td>
-                                    <td className="px-6 py-4">{tenant.currentPlan}</td>
+                                    <td className="px-6 py-4">{tenant.currentPlan || t('dashboard.noPlan')}</td>
                                     <td className="px-6 py-4">
                                         <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColors[tenant.status]}`}>{t(`status.${tenant.status}`)}</span>
                                     </td>
@@ -119,7 +139,8 @@ const Tenants: React.FC<TenantsProps> = ({ tenants, setActivePage, onUpdateTenan
                                         </div>
                                     </td>
                                 </tr>
-                            ))}
+                                ))
+                            )}
                         </tbody>
                     </table>
                 </div>

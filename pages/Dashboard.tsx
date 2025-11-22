@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import Icon from '../components/Icon';
 import Skeleton from '../components/Skeleton';
 import { useI18n } from '../context/i18n';
+import { getCompaniesAPI, getSubscriptionsAPI, getPaymentsAPI, getPlansAPI } from '../services/api';
 
 interface KpiCardProps {
   title: string;
@@ -53,21 +54,14 @@ const KpiCard: React.FC<KpiCardProps> = ({ title, value, change, changeType, ico
 };
 
 const Dashboard: React.FC = () => {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  
   const [loading, setLoading] = useState(false);
-
-  const handleRefresh = () => {
-    setLoading(true);
-    setTimeout(() => {
-        setLoading(false);
-    }, 2000);
-  };
-
-  const kpiData = [
+  const [kpiData, setKpiData] = useState([
     {
       title: t('dashboard.kpi.mrr'),
-      value: "$12,345",
-      change: "+2.5%",
+      value: "$0",
+      change: "0%",
       changeType: "increase" as const,
       icon: "cash",
       colors: {
@@ -78,8 +72,8 @@ const Dashboard: React.FC = () => {
     },
     {
       title: t('dashboard.kpi.activeTenants'),
-      value: "150",
-      change: "+10",
+      value: "0",
+      change: "0",
       changeType: "increase" as const,
       icon: "tenants",
       colors: {
@@ -90,9 +84,9 @@ const Dashboard: React.FC = () => {
     },
     {
       title: t('dashboard.kpi.newSubscriptions'),
-      value: "25",
-      change: "-2",
-      changeType: "decrease" as const,
+      value: "0",
+      change: "0",
+      changeType: "increase" as const,
       icon: "trending-up",
       colors: {
         bg: 'bg-yellow-50 dark:bg-gray-800',
@@ -102,8 +96,8 @@ const Dashboard: React.FC = () => {
     },
     {
       title: t('dashboard.kpi.expiringSubscriptions'),
-      value: "8",
-      change: "+1",
+      value: "0",
+      change: "0",
       changeType: "increase" as const,
       icon: "clock",
       colors: {
@@ -112,35 +106,194 @@ const Dashboard: React.FC = () => {
         icon: 'text-indigo-600 dark:text-indigo-400'
       }
     },
-  ];
+  ]);
+  const [revenueData, setRevenueData] = useState<Array<{name: string; revenue: number; profit: number}>>([]);
+  const [planData, setPlanData] = useState<Array<{name: string; count: number}>>([]);
+  const [recentCompanies, setRecentCompanies] = useState<Array<{name: string; plan: string}>>([]);
+  const [recentPayments, setRecentPayments] = useState<Array<{name: string; amount: string}>>([]);
 
-  const revenueData = [
-    { name: 'Jan', revenue: 4000, profit: 2400 }, { name: 'Feb', revenue: 3000, profit: 1800 }, { name: 'Mar', revenue: 5000, profit: 3200 },
-    { name: 'Apr', revenue: 4500, profit: 2800 }, { name: 'May', revenue: 6000, profit: 4000 }, { name: 'Jun', revenue: 5500, profit: 3500 },
-    { name: 'Jul', revenue: 7000, profit: 4500 }, { name: 'Aug', revenue: 6500, profit: 4200 }, { name: 'Sep', revenue: 7500, profit: 5000 },
-    { name: 'Oct', revenue: 8000, profit: 5500 }, { name: 'Nov', revenue: 9000, profit: 6000 }, { name: 'Dec', revenue: 8500, profit: 5800 },
-  ];
+  useEffect(() => {
+    loadDashboardData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
 
-  const planData = [
-    { name: 'Free', count: 50 }, { name: 'Basic', count: 45 },
-    { name: 'Pro', count: 35 }, { name: 'Enterprise', count: 20 },
-  ];
+  const loadDashboardData = async () => {
+    setLoading(true);
+    try {
+      const [companiesRes, subscriptionsRes, paymentsRes, plansRes] = await Promise.all([
+        getCompaniesAPI(),
+        getSubscriptionsAPI(),
+        getPaymentsAPI(),
+        getPlansAPI()
+      ]);
 
-  const recentCompanies = [
-      { name: "Tech Solutions Inc.", plan: "Pro" },
-      { name: "Innovate Co.", plan: "Basic" },
-      { name: "Data Systems", plan: "Enterprise" },
-      { name: "Creative Minds", plan: "Free" },
-      { name: "Future Forward", plan: "Pro" },
-  ];
+      const companies = companiesRes.results || [];
+      const subscriptions = subscriptionsRes.results || [];
+      const payments = paymentsRes.results || [];
+      const plans = plansRes.results || [];
 
-  const recentPayments = [
-      { name: "Global Corp", amount: "$299" },
-      { name: "Web Weavers", amount: "$99" },
-      { name: "Digital Dreams", amount: "$299" },
-      { name: "Alpha Tech", amount: "$499" },
-      { name: "Beta Innovations", amount: "$99" },
-  ];
+      // Calculate MRR from active subscriptions
+      const activeSubscriptions = subscriptions.filter((sub: any) => sub.is_active);
+      const mrr = activeSubscriptions.reduce((sum: number, sub: any) => {
+        const plan = plans.find((p: any) => p.id === sub.plan);
+        return sum + (plan ? parseFloat(plan.price_monthly || 0) : 0);
+      }, 0);
+
+      // Count active tenants (companies with active subscriptions)
+      const activeTenants = activeSubscriptions.length;
+
+      // New subscriptions this month
+      const now = new Date();
+      const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const newSubscriptions = subscriptions.filter((sub: any) => {
+        const created = new Date(sub.created_at);
+        return created >= thisMonth;
+      }).length;
+
+      // Expiring subscriptions (within 30 days)
+      const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const expiringSubscriptions = subscriptions.filter((sub: any) => {
+        if (!sub.is_active || !sub.end_date) return false;
+        const endDate = new Date(sub.end_date);
+        return endDate <= thirtyDaysFromNow && endDate > now;
+      }).length;
+
+      // Update KPIs
+      setKpiData([
+        {
+          title: t('dashboard.kpi.mrr'),
+          value: `$${mrr.toLocaleString()}`,
+          change: "+0%",
+          changeType: "increase" as const,
+          icon: "cash",
+          colors: {
+            bg: 'bg-blue-50 dark:bg-gray-800',
+            iconContainer: 'bg-blue-100 dark:bg-blue-900/50',
+            icon: 'text-blue-600 dark:text-blue-400'
+          }
+        },
+        {
+          title: t('dashboard.kpi.activeTenants'),
+          value: activeTenants.toString(),
+          change: "+0",
+          changeType: "increase" as const,
+          icon: "tenants",
+          colors: {
+            bg: 'bg-green-50 dark:bg-gray-800',
+            iconContainer: 'bg-green-100 dark:bg-green-900/50',
+            icon: 'text-green-600 dark:text-green-400'
+          }
+        },
+        {
+          title: t('dashboard.kpi.newSubscriptions'),
+          value: newSubscriptions.toString(),
+          change: "+0",
+          changeType: "increase" as const,
+          icon: "trending-up",
+          colors: {
+            bg: 'bg-yellow-50 dark:bg-gray-800',
+            iconContainer: 'bg-yellow-100 dark:bg-yellow-900/50',
+            icon: 'text-yellow-600 dark:text-yellow-400'
+          }
+        },
+        {
+          title: t('dashboard.kpi.expiringSubscriptions'),
+          value: expiringSubscriptions.toString(),
+          change: "+0",
+          changeType: "increase" as const,
+          icon: "clock",
+          colors: {
+            bg: 'bg-indigo-50 dark:bg-gray-800',
+            iconContainer: 'bg-indigo-100 dark:bg-indigo-900/50',
+            icon: 'text-indigo-600 dark:text-indigo-400'
+          }
+        },
+      ]);
+
+      // Calculate revenue data (last 12 months)
+      const monthKeys = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const revenueByMonth: Array<{name: string; revenue: number; profit: number}> = [];
+      
+      // Create month data with translated names in order - ensure all 12 months are created
+      for (let i = 11; i >= 0; i--) {
+        const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const monthIndex = date.getMonth(); // 0-11
+        const monthKey = monthKeys[monthIndex];
+        const monthName = t(`dashboard.months.${monthKey}`);
+        revenueByMonth.push({ name: monthName, revenue: 0, profit: 0 });
+      }
+
+      // Update revenue data from payments
+      payments.forEach((payment: any) => {
+        if (payment.payment_status === 'successful' || payment.payment_status === 'Success') {
+          const paymentDate = new Date(payment.created_at);
+          const monthIndex = paymentDate.getMonth();
+          const monthKey = monthKeys[monthIndex];
+          const monthName = t(`dashboard.months.${monthKey}`);
+          const monthData = revenueByMonth.find(m => m.name === monthName);
+          if (monthData) {
+            monthData.revenue += parseFloat(payment.amount || 0);
+            monthData.profit += parseFloat(payment.amount || 0) * 0.7; // Assume 70% profit margin
+          }
+        }
+      });
+
+      // Ensure we have exactly 12 months
+      if (revenueByMonth.length !== 12) {
+        console.warn(`Expected 12 months but got ${revenueByMonth.length}`, revenueByMonth.map(m => m.name));
+      }
+
+      // Debug: Log all months to verify
+      console.log('Revenue data months:', revenueByMonth.map(m => m.name));
+
+      setRevenueData(revenueByMonth);
+
+      // Plan distribution
+      const planCounts: {[key: string]: number} = {};
+      plans.forEach((plan: any) => {
+        planCounts[plan.name] = 0;
+      });
+      activeSubscriptions.forEach((sub: any) => {
+        const plan = plans.find((p: any) => p.id === sub.plan);
+        if (plan) {
+          planCounts[plan.name] = (planCounts[plan.name] || 0) + 1;
+        }
+      });
+      setPlanData(Object.entries(planCounts).map(([name, count]) => ({ name, count })));
+
+      // Recent companies (last 5)
+      const recent = companies
+        .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 5)
+        .map((company: any) => {
+          const sub = subscriptions.find((s: any) => s.company === company.id && s.is_active);
+          const plan = sub ? plans.find((p: any) => p.id === sub.plan) : null;
+          return {
+            name: company.name,
+            plan: plan ? plan.name : t('dashboard.noPlan')
+          };
+        });
+      setRecentCompanies(recent);
+
+      // Recent payments (last 5)
+      const recentPaymentsList = payments
+        .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 5)
+        .map((payment: any) => ({
+          name: payment.subscription_company_name || t('dashboard.unknown'),
+          amount: `$${parseFloat(payment.amount || 0).toFixed(2)}`
+        }));
+      setRecentPayments(recentPaymentsList);
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRefresh = () => {
+    loadDashboardData();
+  };
   
   const ListSkeleton: React.FC = () => (
     <div className="space-y-3">
@@ -157,7 +310,7 @@ const Dashboard: React.FC = () => {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{t('dashboard.title')}</h1>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center gap-2">
             <input type="date" className="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 text-sm"/>
             <button 
               onClick={handleRefresh}
@@ -176,12 +329,31 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mt-6">
         <div className="lg:col-span-3 bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
             <h3 className="text-lg font-semibold mb-4">{t('dashboard.revenueGrowth.title')}</h3>
-            {loading ? <Skeleton className="w-full h-[300px]" /> : (
-                <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={revenueData}>
+            {loading ? <Skeleton className="w-full h-[350px]" /> : (
+                <ResponsiveContainer width="100%" height={350}>
+                    <LineChart 
+                        data={revenueData}
+                        margin={{ 
+                            top: 20, 
+                            right: language === 'ar' ? 20 : 30, 
+                            left: language === 'ar' ? 50 : 20, 
+                            bottom: language === 'ar' ? 60 : 40 
+                        }}
+                    >
                         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
-                        <XAxis dataKey="name" />
-                        <YAxis />
+                        <XAxis 
+                            dataKey="name" 
+                            interval={0}
+                            angle={0}
+                            textAnchor="middle"
+                            height={60}
+                            tick={{ fontSize: 11 }}
+                            dy={10}
+                        />
+                        <YAxis 
+                            tick={{ fontSize: 11, dx: language === 'ar' ? -5 : 0 }}
+                            width={language === 'ar' ? 60 : 50}
+                        />
                         <Tooltip contentStyle={{ backgroundColor: 'rgba(31, 41, 55, 0.8)', border: 'none' }}/>
                         <Legend />
                         <Line type="monotone" dataKey="revenue" name={t('dashboard.revenueGrowth.revenue')} stroke="hsl(var(--color-primary-500))" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }}/>

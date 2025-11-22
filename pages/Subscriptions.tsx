@@ -11,43 +11,51 @@ import { useTheme } from '../context/ThemeContext';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuditLog } from '../context/AuditLogContext';
 import PlanCardSkeleton from '../components/PlanCardSkeleton';
+import { getPlansAPI, createPlanAPI, updatePlanAPI, deletePlanAPI, getSubscriptionsAPI, updateSubscriptionAPI, getCompaniesAPI, getInvoicesAPI } from '../services/api';
+import { getPaymentsAPI } from '../services/api';
 
-
-const initialPlans: Plan[] = [
-    { id: 1, name: 'المجانية', type: 'Free', priceMonthly: 0, priceYearly: 0, trialDays: 0, users: 2, clients: 10, storage: 1, features: 'ميزة أساسية 1\nميزة أساسية 2', visible: true },
-    { id: 2, name: 'الفضية', type: 'Paid', priceMonthly: 49, priceYearly: 499, trialDays: 0, users: 10, clients: 100, storage: 10, features: 'كل الميزات الأساسية\nدعم عبر البريد الإلكتروني', visible: true },
-    { id: 3, name: 'الذهبية', type: 'Paid', priceMonthly: 99, priceYearly: 999, trialDays: 0, users: 50, clients: 500, storage: 50, features: 'كل الميزات المتقدمة\nدعم فني ذو أولوية', visible: true },
-    { id: 4, name: 'التجريبية', type: 'Trial', priceMonthly: 0, priceYearly: 0, trialDays: 14, users: 5, clients: 20, storage: 2, features: 'جميع ميزات الخطة الذهبية لمدة 14 يومًا', visible: true },
-];
-
-const mockPayments: Payment[] = [
-    { id: 'pay_123', companyName: 'Tech Solutions Inc.', amount: 99, plan: 'الذهبية', status: PaymentStatus.Successful, date: '2023-10-15' },
-    { id: 'pay_124', companyName: 'Innovate Co.', amount: 49, plan: 'الفضية', status: PaymentStatus.Successful, date: '2023-10-14' },
-    { id: 'pay_125', companyName: 'Data Systems', amount: 49, plan: 'الفضية', status: PaymentStatus.Failed, date: '2023-10-13' },
-];
-
-const mockInvoices: Invoice[] = [
-    { id: 'inv_001', companyName: 'Tech Solutions Inc.', amount: 99, dueDate: '2023-11-15', status: InvoiceStatus.Due },
-    { id: 'inv_002', companyName: 'Innovate Co.', amount: 49, dueDate: '2023-10-14', status: InvoiceStatus.Paid },
-    { id: 'inv_003', companyName: 'Alpha Corp', amount: 499, dueDate: '2023-09-01', status: InvoiceStatus.Overdue },
-];
 
 interface SubscriptionsProps {
     tenants: Tenant[];
 }
 
 const PlansTab: React.FC<SubscriptionsProps> = ({ tenants }) => {
-    const { t } = useI18n();
+    const { t, language } = useI18n();
     const { addLog } = useAuditLog();
-    const [plans, setPlans] = useState<Plan[]>(initialPlans);
+    const [plans, setPlans] = useState<Plan[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        const timer = setTimeout(() => setIsLoading(false), 1200);
-        return () => clearTimeout(timer);
+        loadPlans();
     }, []);
+
+    const loadPlans = async () => {
+        setIsLoading(true);
+        try {
+            const response = await getPlansAPI();
+            // Map API plan fields to frontend format
+            const apiPlans = (response.results || []).map((plan: any) => ({
+                id: plan.id,
+                name: plan.name, // API field: name
+                type: 'Paid' as const, // Default to Paid, can be enhanced based on plan.type if available
+                priceMonthly: parseFloat(plan.price_monthly || 0), // API field: price_monthly
+                priceYearly: parseFloat(plan.price_yearly || 0), // API field: price_yearly
+                trialDays: plan.trial_days || 0, // API field: trial_days
+                users: plan.users || 'unlimited' as const, // API field: users
+                clients: plan.clients || 'unlimited' as const, // API field: clients
+                storage: plan.storage || 10, // API field: storage
+                features: plan.description || '', // API field: description
+                visible: plan.visible !== false, // API field: visible
+            }));
+            setPlans(apiPlans);
+        } catch (error) {
+            console.error('Error loading plans:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const handleOpenModal = (plan: Plan | null) => {
         setEditingPlan(plan);
@@ -59,39 +67,73 @@ const PlansTab: React.FC<SubscriptionsProps> = ({ tenants }) => {
         setEditingPlan(null);
     };
 
-    const handleSavePlan = (planToSave: Omit<Plan, 'id'> & { id?: number }) => {
-        if (planToSave.id) {
-            setPlans(plans.map(p => p.id === planToSave.id ? planToSave as Plan : p));
-            addLog('audit.log.planUpdated', { planName: planToSave.name });
-        } else {
-            const newPlan: Plan = {
-                id: plans.length > 0 ? Math.max(...plans.map(p => p.id)) + 1 : 1,
-                ...planToSave
-            } as Plan;
-            setPlans([newPlan, ...plans]);
-            addLog('audit.log.planCreated', { planName: newPlan.name });
-        }
-        handleCloseModal();
-    };
-
-    const handleDeletePlan = (planId: number) => {
-        if(window.confirm('Are you sure you want to delete this plan?')) {
-            setPlans(plans.filter(p => p.id !== planId));
-            addLog('audit.log.planDeleted', { planId });
-        }
-    };
-
-    const handleToggleVisibility = (planId: number) => {
-        let planName = '';
-        const updatedPlans = plans.map(p => {
-            if (p.id === planId) {
-                planName = p.name;
-                return { ...p, visible: !p.visible };
+    const handleSavePlan = async (planToSave: Omit<Plan, 'id'> & { id?: number }) => {
+        try {
+            if (planToSave.id) {
+                // Use API field names
+                await updatePlanAPI(planToSave.id, {
+                    name: planToSave.name, // API field: name
+                    description: planToSave.features, // API field: description
+                    price_monthly: planToSave.priceMonthly, // API field: price_monthly
+                    price_yearly: planToSave.priceYearly, // API field: price_yearly
+                    trial_days: planToSave.trialDays, // API field: trial_days
+                    users: planToSave.users, // API field: users
+                    clients: planToSave.clients, // API field: clients
+                    storage: planToSave.storage, // API field: storage
+                    visible: planToSave.visible, // API field: visible
+                });
+                addLog('audit.log.planUpdated', { planName: planToSave.name });
+            } else {
+                // Use API field names
+                await createPlanAPI({
+                    name: planToSave.name, // API field: name
+                    description: planToSave.features, // API field: description
+                    price_monthly: planToSave.priceMonthly, // API field: price_monthly
+                    price_yearly: planToSave.priceYearly, // API field: price_yearly
+                    trial_days: planToSave.trialDays, // API field: trial_days
+                    users: planToSave.users, // API field: users
+                    clients: planToSave.clients, // API field: clients
+                    storage: planToSave.storage, // API field: storage
+                    visible: planToSave.visible !== false, // API field: visible
+                });
+                addLog('audit.log.planCreated', { planName: planToSave.name });
             }
-            return p;
-        });
-        setPlans(updatedPlans);
-        addLog('audit.log.planVisibilityToggled', { planName });
+            await loadPlans();
+            handleCloseModal();
+        } catch (error: any) {
+            console.error('Error saving plan:', error);
+            alert(error.message || 'Failed to save plan');
+        }
+    };
+
+    const handleDeletePlan = async (planId: number) => {
+        if(window.confirm('Are you sure you want to delete this plan?')) {
+            try {
+                await deletePlanAPI(planId);
+                addLog('audit.log.planDeleted', { planId });
+                await loadPlans();
+            } catch (error: any) {
+                console.error('Error deleting plan:', error);
+                alert(error.message || 'Failed to delete plan');
+            }
+        }
+    };
+
+    const handleToggleVisibility = async (planId: number) => {
+        const planToToggle = plans.find(p => p.id === planId);
+        if (!planToToggle) return;
+
+        try {
+            // Use API field names
+            await updatePlanAPI(planId, {
+                visible: !planToToggle.visible, // API field: visible
+            });
+            await loadPlans();
+            addLog('audit.log.planVisibilityToggled', { planName: planToToggle.name });
+        } catch (error: any) {
+            console.error('Error toggling plan visibility:', error);
+            alert(error.message || 'Failed to toggle plan visibility');
+        }
     };
 
     return (
@@ -105,6 +147,10 @@ const PlansTab: React.FC<SubscriptionsProps> = ({ tenants }) => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {isLoading ? (
                 [...Array(4)].map((_, i) => <PlanCardSkeleton key={i} />)
+            ) : plans.length === 0 ? (
+                <div className="col-span-full text-center py-12">
+                    <p className="text-gray-500 dark:text-gray-400 text-lg">{t('subscriptions.plans.noPlans') || 'No plans found. Create your first plan to get started.'}</p>
+                </div>
             ) : (
                 plans.map(plan => {
                     const isDeletable = !tenants.some(tenant => tenant.currentPlan === plan.name);
@@ -121,10 +167,30 @@ const PlansTab: React.FC<SubscriptionsProps> = ({ tenants }) => {
                                 {plan.type === 'Paid' && <p className="text-sm text-gray-500 dark:text-gray-400">${plan.priceYearly}/{t('common.year')}</p>}
                             </div>
 
+                            {plan.features && (
+                                <div className="mb-4">
+                                    <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-3">{plan.features}</p>
+                                </div>
+                            )}
                             <ul className="space-y-2 text-gray-600 dark:text-gray-300 flex-grow mb-6">
-                                <li><span className="font-semibold">{plan.users}</span> {t('subscriptions.plans.users')}</li>
-                                <li><span className="font-semibold">{plan.clients}</span> {t('subscriptions.plans.clients')}</li>
-                                <li><span className="font-semibold">{plan.storage}</span> {t('subscriptions.plans.storageGB')}</li>
+                                <li className="flex items-center">
+                                    <Icon name="users" className="w-4 h-4 mr-2 text-primary-600" />
+                                    <span className="font-semibold">{plan.users === 'unlimited' ? t('subscriptions.plans.unlimited') || 'Unlimited' : plan.users}</span> {t('subscriptions.plans.users')}
+                                </li>
+                                <li className="flex items-center">
+                                    <Icon name="users" className="w-4 h-4 mr-2 text-primary-600" />
+                                    <span className="font-semibold">{plan.clients === 'unlimited' ? t('subscriptions.plans.unlimited') || 'Unlimited' : plan.clients}</span> {t('subscriptions.plans.clients')}
+                                </li>
+                                <li className="flex items-center">
+                                    <Icon name="database" className="w-4 h-4 mr-2 text-primary-600" />
+                                    <span className="font-semibold">{plan.storage}</span> {t('subscriptions.plans.storageGB')}
+                                </li>
+                                {plan.trialDays > 0 && (
+                                    <li className="flex items-center">
+                                        <Icon name="clock" className="w-4 h-4 mr-2 text-primary-600" />
+                                        <span className="font-semibold">{plan.trialDays}</span> {t('subscriptions.plans.trialDays') || 'Trial Days'}
+                                    </li>
+                                )}
                             </ul>
 
                             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
@@ -162,7 +228,37 @@ const PlansTab: React.FC<SubscriptionsProps> = ({ tenants }) => {
 )};
 
 const PaymentsTab: React.FC = () => {
-    const { t } = useI18n();
+    const { t, language } = useI18n();
+    const [payments, setPayments] = useState<Payment[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        loadPayments();
+    }, []);
+
+    const loadPayments = async () => {
+        setIsLoading(true);
+        try {
+            const response = await getPaymentsAPI();
+            // Map API payment fields to frontend format
+            const apiPayments: Payment[] = (response.results || []).map((payment: any) => ({
+                id: payment.id.toString(), // API field: id
+                companyName: payment.subscription_company_name || 'Unknown', // From subscription relation
+                amount: parseFloat(payment.amount || 0), // API field: amount
+                plan: payment.subscription_plan_name || 'Unknown', // From subscription relation
+                status: payment.payment_status === 'successful' || payment.payment_status === 'Success' 
+                    ? PaymentStatus.Successful 
+                    : PaymentStatus.Failed, // API field: payment_status
+                date: payment.created_at ? new Date(payment.created_at).toISOString().split('T')[0] : '', // API field: created_at
+            }));
+            setPayments(apiPayments);
+        } catch (error) {
+            console.error('Error loading payments:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const statusColors: { [key in PaymentStatus]: string } = {
         [PaymentStatus.Successful]: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
         [PaymentStatus.Failed]: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
@@ -177,7 +273,7 @@ const PaymentsTab: React.FC = () => {
             `"${t('subscriptions.payments.table.date')}"`
         ];
 
-        const rows = mockPayments.map(p => 
+        const rows = payments.map(p => 
             [
                 `"${p.id}"`,
                 `"${p.companyName}"`,
@@ -208,7 +304,7 @@ const PaymentsTab: React.FC = () => {
                 </button>
             </div>
             <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+                <table className={`w-full text-sm ${language === 'ar' ? 'text-right' : 'text-left'} text-gray-500 dark:text-gray-400`}>
                      <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
                         <tr>
                             <th className="px-6 py-3">{t('subscriptions.payments.table.transactionId')}</th>
@@ -219,15 +315,29 @@ const PaymentsTab: React.FC = () => {
                         </tr>
                     </thead>
                     <tbody>
-                        {mockPayments.map(p => (
-                            <tr key={p.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-                                <td className="px-6 py-4 font-mono">{p.id}</td>
-                                <td className="px-6 py-4">{p.companyName}</td>
-                                <td className="px-6 py-4">${p.amount}</td>
-                                <td className="px-6 py-4"><span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColors[p.status]}`}>{t(`status.${p.status}`)}</span></td>
-                                <td className="px-6 py-4">{p.date}</td>
+                        {isLoading ? (
+                            <tr>
+                                <td colSpan={5} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                                    Loading payments...
+                                </td>
                             </tr>
-                        ))}
+                        ) : payments.length === 0 ? (
+                            <tr>
+                                <td colSpan={5} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                                    {t('subscriptions.payments.noPayments')}
+                                </td>
+                            </tr>
+                        ) : (
+                            payments.map(p => (
+                                <tr key={p.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
+                                    <td className="px-6 py-4 font-mono">{p.id}</td>
+                                    <td className="px-6 py-4">{p.companyName}</td>
+                                    <td className="px-6 py-4">${p.amount}</td>
+                                    <td className="px-6 py-4"><span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColors[p.status]}`}>{t(`status.${p.status}`)}</span></td>
+                                    <td className="px-6 py-4">{p.date}</td>
+                                </tr>
+                            ))
+                        )}
                     </tbody>
                 </table>
             </div>
@@ -236,11 +346,39 @@ const PaymentsTab: React.FC = () => {
 };
 
 const InvoicesTab: React.FC = () => {
-    const { t } = useI18n();
+    const { t, language } = useI18n();
     const { logoUrl } = useTheme();
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [downloadingId, setDownloadingId] = useState<string | null>(null);
+    const [invoices, setInvoices] = useState<Invoice[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        loadInvoices();
+    }, []);
+
+    const loadInvoices = async () => {
+        setIsLoading(true);
+        try {
+            const response = await getInvoicesAPI();
+            // Map API invoice fields to frontend format
+            const apiInvoices: Invoice[] = (response.results || []).map((invoice: any) => ({
+                id: invoice.invoice_number || `inv_${invoice.id}`, // API field: invoice_number
+                companyName: invoice.company_name || 'Unknown', // From subscription relation
+                amount: parseFloat(invoice.amount || 0), // API field: amount
+                dueDate: invoice.due_date ? new Date(invoice.due_date).toISOString().split('T')[0] : '', // API field: due_date
+                status: invoice.status === 'paid' ? InvoiceStatus.Paid 
+                    : invoice.status === 'overdue' ? InvoiceStatus.Overdue 
+                    : InvoiceStatus.Due, // API field: status
+            }));
+            setInvoices(apiInvoices);
+        } catch (error) {
+            console.error('Error loading invoices:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const downloadRef = useRef<HTMLDivElement>(null);
     const downloadRootRef = useRef<any>(null);
@@ -315,7 +453,7 @@ const InvoicesTab: React.FC = () => {
             `"${t('subscriptions.invoices.table.dueDate')}"`
         ];
 
-        const rows = mockInvoices.map(i => 
+        const rows = invoices.map(i => 
             [
                 `"${i.id}"`,
                 `"${i.companyName}"`,
@@ -347,7 +485,7 @@ const InvoicesTab: React.FC = () => {
                     </button>
                 </div>
                  <div className="overflow-x-auto">
-                     <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+                     <table className={`w-full text-sm ${language === 'ar' ? 'text-right' : 'text-left'} text-gray-500 dark:text-gray-400`}>
                          <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
                             <tr>
                                 <th className="px-6 py-3">{t('subscriptions.invoices.table.invoiceNo')}</th>
@@ -359,7 +497,20 @@ const InvoicesTab: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {mockInvoices.map(i => (
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={6} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                                        Loading invoices...
+                                    </td>
+                                </tr>
+                            ) : invoices.length === 0 ? (
+                                <tr>
+                                    <td colSpan={6} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                                        {t('subscriptions.invoices.noInvoices')}
+                                    </td>
+                                </tr>
+                            ) : (
+                                invoices.map(i => (
                                 <tr key={i.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
                                     <td className="px-6 py-4 font-mono">{i.id}</td>
                                     <td className="px-6 py-4">{i.companyName}</td>
@@ -375,7 +526,8 @@ const InvoicesTab: React.FC = () => {
                                         </div>
                                     </td>
                                 </tr>
-                            ))}
+                            ))
+                            )}
                         </tbody>
                     </table>
                 </div>
@@ -391,12 +543,144 @@ const InvoicesTab: React.FC = () => {
     )
 };
 
+const SubscriptionsTab: React.FC<SubscriptionsProps> = ({ tenants }) => {
+  const { t, language } = useI18n();
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadSubscriptions();
+  }, []);
+
+  const loadSubscriptions = async () => {
+    setIsLoading(true);
+    try {
+      const [subscriptionsRes, companiesRes, plansRes] = await Promise.all([
+        getSubscriptionsAPI(),
+        getCompaniesAPI(),
+        getPlansAPI()
+      ]);
+
+      const subs = subscriptionsRes.results || [];
+      const companies = companiesRes.results || [];
+      const plans = plansRes.results || [];
+
+      // Map subscriptions with company and plan names
+      const mappedSubs = subs.map((sub: any) => {
+        const company = companies.find((c: any) => c.id === sub.company);
+        const plan = plans.find((p: any) => p.id === sub.plan);
+        return {
+          ...sub,
+          company_name: company?.name || 'Unknown',
+          plan_name: plan?.name || 'Unknown',
+        };
+      });
+
+      setSubscriptions(mappedSubs);
+    } catch (error) {
+      console.error('Error loading subscriptions:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleToggleActive = async (subscription: any) => {
+    try {
+      await updateSubscriptionAPI(subscription.id, {
+        ...subscription,
+        is_active: !subscription.is_active
+      });
+      await loadSubscriptions();
+    } catch (error: any) {
+      console.error('Error updating subscription:', error);
+      alert(error.message || 'Failed to update subscription');
+    }
+  };
+
+  return (
+    <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+          <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+            <tr>
+              <th className="px-6 py-3">{t('subscriptions.subscriptions.table.companyName')}</th>
+              <th className="px-6 py-3">{t('subscriptions.subscriptions.table.plan')}</th>
+              <th className="px-6 py-3">{t('subscriptions.subscriptions.table.startDate')}</th>
+              <th className="px-6 py-3">{t('subscriptions.subscriptions.table.endDate')}</th>
+              <th className="px-6 py-3">{t('subscriptions.subscriptions.table.status')}</th>
+              <th className="px-6 py-3 text-center">{t('subscriptions.subscriptions.table.actions')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              <tr>
+                <td colSpan={6} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                  Loading subscriptions...
+                </td>
+              </tr>
+            ) : subscriptions.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                  {t('subscriptions.subscriptions.noSubscriptions') || 'No subscriptions found'}
+                </td>
+              </tr>
+            ) : (
+              subscriptions.map((sub: any) => {
+                const statusColor = sub.is_active 
+                  ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+                  : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+                return (
+                <tr key={sub.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
+                  <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    {sub.company_name}
+                  </td>
+                  <td className="px-6 py-4">{sub.plan_name}</td>
+                  <td className="px-6 py-4">
+                    {sub.start_date ? new Date(sub.start_date).toISOString().split('T')[0] : 'N/A'}
+                  </td>
+                  <td className="px-6 py-4">
+                    {sub.end_date ? new Date(sub.end_date).toISOString().split('T')[0] : 'N/A'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                      sub.is_active 
+                        ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+                        : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+                    }`}>
+                      {sub.is_active ? t('status.Active') : t('status.Inactive')}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center justify-center">
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={sub.is_active} 
+                          onChange={() => handleToggleActive(sub)} 
+                          className="sr-only peer" 
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary-600"></div>
+                      </label>
+                    </div>
+                  </td>
+                </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 const Subscriptions: React.FC<SubscriptionsProps> = ({ tenants }) => {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState('plans');
 
   const tabs = [
     { id: 'plans', label: t('subscriptions.tabs.plans') },
+    { id: 'subscriptions', label: t('subscriptions.tabs.subscriptions') || 'Subscriptions' },
     { id: 'payments', label: t('subscriptions.tabs.payments') },
     { id: 'invoices', label: t('subscriptions.tabs.invoices') },
   ];
@@ -405,7 +689,7 @@ const Subscriptions: React.FC<SubscriptionsProps> = ({ tenants }) => {
     <div>
       <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">{t('subscriptions.title')}</h1>
       <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
-        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+        <nav className="-mb-px flex gap-8" aria-label="Tabs">
           {tabs.map(tab => (
             <button
               key={tab.id}
@@ -423,6 +707,7 @@ const Subscriptions: React.FC<SubscriptionsProps> = ({ tenants }) => {
       </div>
       
       {activeTab === 'plans' && <PlansTab tenants={tenants} />}
+      {activeTab === 'subscriptions' && <SubscriptionsTab tenants={tenants} />}
       {activeTab === 'payments' && <PaymentsTab />}
       {activeTab === 'invoices' && <InvoicesTab />}
     </div>

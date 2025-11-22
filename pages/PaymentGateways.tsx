@@ -7,25 +7,7 @@ import GatewaySettingsModal from '../components/GatewaySettingsModal';
 import AddGatewayModal from '../components/AddGatewayModal';
 import { useAuditLog } from '../context/AuditLogContext';
 import GatewayCardSkeleton from '../components/GatewayCardSkeleton';
-
-const initialGateways: PaymentGateway[] = [
-    {
-        id: 'stripe',
-        name: 'Stripe',
-        description: 'To accept credit and debit cards globally.',
-        status: PaymentGatewayStatus.SetupRequired,
-        enabled: false,
-        config: {},
-    },
-    {
-        id: 'paypal',
-        name: 'PayPal',
-        description: 'To offer a trusted and widely used payment method.',
-        status: PaymentGatewayStatus.SetupRequired,
-        enabled: false,
-        config: {},
-    }
-];
+import { getPaymentGatewaysAPI, createPaymentGatewayAPI, updatePaymentGatewayAPI, deletePaymentGatewayAPI, togglePaymentGatewayAPI } from '../services/api';
 
 const GatewayCard: React.FC<{ gateway: PaymentGateway, onManage: () => void, onToggle: (enabled: boolean) => void }> = ({ gateway, onManage, onToggle }) => {
     const { t } = useI18n();
@@ -71,55 +53,100 @@ const GatewayCard: React.FC<{ gateway: PaymentGateway, onManage: () => void, onT
 const PaymentGateways: React.FC = () => {
     const { t } = useI18n();
     const { addLog } = useAuditLog();
-    const [gateways, setGateways] = useState<PaymentGateway[]>(initialGateways);
+    const [gateways, setGateways] = useState<PaymentGateway[]>([]);
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [selectedGateway, setSelectedGateway] = useState<PaymentGateway | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
-     useEffect(() => {
-        const timer = setTimeout(() => setIsLoading(false), 1000);
-        return () => clearTimeout(timer);
+    useEffect(() => {
+        loadGateways();
     }, []);
+
+    const loadGateways = async () => {
+        setIsLoading(true);
+        try {
+            const response = await getPaymentGatewaysAPI();
+            // Map API payment gateway fields to frontend format
+            const apiGateways: PaymentGateway[] = (response.results || []).map((gateway: any) => ({
+                id: gateway.id.toString(), // API field: id
+                name: gateway.name, // API field: name
+                description: gateway.description || '', // API field: description
+                status: gateway.status === 'active' ? PaymentGatewayStatus.Active
+                    : gateway.status === 'disabled' ? PaymentGatewayStatus.Disabled
+                    : PaymentGatewayStatus.SetupRequired, // API field: status
+                enabled: gateway.enabled || false, // API field: enabled
+                config: gateway.config || {}, // API field: config
+            }));
+            setGateways(apiGateways);
+        } catch (error) {
+            console.error('Error loading payment gateways:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const handleManage = (gateway: PaymentGateway) => {
         setSelectedGateway(gateway);
         setIsSettingsModalOpen(true);
     };
 
-    const handleToggle = (gatewayId: string, enabled: boolean) => {
-        let gatewayName = '';
-        setGateways(prev => prev.map(gw => {
-            if (gw.id === gatewayId) {
-                gatewayName = gw.name;
-                const newStatus = enabled ? PaymentGatewayStatus.Active : PaymentGatewayStatus.Disabled;
-                return { ...gw, enabled, status: newStatus };
-            }
-            return gw;
-        }));
-        const action = enabled ? t('audit.log.activated') : t('audit.log.deactivated');
-        addLog('audit.log.gatewayToggled', { action, gatewayName });
+    const handleToggle = async (gatewayId: string, enabled: boolean) => {
+        try {
+            const gateway = gateways.find(gw => gw.id === gatewayId);
+            if (!gateway) return;
+
+            // Use API endpoint to toggle
+            await togglePaymentGatewayAPI(parseInt(gatewayId));
+            await loadGateways();
+            
+            const action = enabled ? t('audit.log.activated') : t('audit.log.deactivated');
+            addLog('audit.log.gatewayToggled', { action, gatewayName: gateway.name });
+        } catch (error: any) {
+            console.error('Error toggling gateway:', error);
+            alert(error.message || 'Failed to toggle gateway');
+        }
     };
     
-    const handleSaveSettings = (updatedGateway: PaymentGateway) => {
-        setGateways(prev => prev.map(gw => gw.id === updatedGateway.id ? updatedGateway : gw));
-        addLog('audit.log.gatewaySettingsUpdated', { gatewayName: updatedGateway.name });
-        setIsSettingsModalOpen(false);
-        setSelectedGateway(null);
+    const handleSaveSettings = async (updatedGateway: PaymentGateway) => {
+        try {
+            // Use API field names: name, description, status, enabled, config
+            await updatePaymentGatewayAPI(parseInt(updatedGateway.id), {
+                name: updatedGateway.name, // API field: name
+                description: updatedGateway.description, // API field: description
+                status: updatedGateway.status === PaymentGatewayStatus.Active ? 'active'
+                    : updatedGateway.status === PaymentGatewayStatus.Disabled ? 'disabled'
+                    : 'setup_required', // API field: status
+                enabled: updatedGateway.enabled, // API field: enabled
+                config: updatedGateway.config, // API field: config
+            });
+            await loadGateways();
+            addLog('audit.log.gatewaySettingsUpdated', { gatewayName: updatedGateway.name });
+            setIsSettingsModalOpen(false);
+            setSelectedGateway(null);
+        } catch (error: any) {
+            console.error('Error saving gateway settings:', error);
+            alert(error.message || 'Failed to save gateway settings');
+        }
     };
 
-    const handleAddGateway = ({ name, description }: { name: string; description: string }) => {
-        const newGateway: PaymentGateway = {
-            id: name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
-            name,
-            description,
-            status: PaymentGatewayStatus.SetupRequired,
-            enabled: false,
-            config: {}
-        };
-        setGateways(prev => [...prev, newGateway]);
-        addLog('audit.log.gatewayAdded', { gatewayName: name });
-        setIsAddModalOpen(false);
+    const handleAddGateway = async ({ name, description }: { name: string; description: string }) => {
+        try {
+            // Use API field names: name, description, status, enabled, config
+            await createPaymentGatewayAPI({
+                name, // API field: name
+                description, // API field: description
+                status: 'setup_required', // API field: status
+                enabled: false, // API field: enabled
+                config: {}, // API field: config
+            });
+            await loadGateways();
+            addLog('audit.log.gatewayAdded', { gatewayName: name });
+            setIsAddModalOpen(false);
+        } catch (error: any) {
+            console.error('Error adding gateway:', error);
+            alert(error.message || 'Failed to add gateway');
+        }
     };
 
 

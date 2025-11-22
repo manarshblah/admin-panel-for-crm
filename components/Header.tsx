@@ -59,10 +59,10 @@ const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen }) => {
               onClick={toggleTheme}
               className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
             >
-              {colorTheme === 'light' ? <Icon name="moon" /> : <Icon name="sun" />}
+              {colorTheme === 'dark' ? <Icon name="moon" /> : <Icon name="sun" />}
             </button>
             <div className="relative" ref={dropdownRef}>
-              <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center space-x-2">
+              <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className={`flex items-center ${language === 'ar' ? 'space-x-reverse' : ''} gap-2`}>
                 <img
                   className="h-8 w-8 rounded-full object-cover"
                   src="https://picsum.photos/100"

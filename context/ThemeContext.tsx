@@ -10,19 +10,26 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-const DEFAULT_PRIMARY_COLOR = '#3b82f6';
+const DEFAULT_PRIMARY_COLOR = '#9333ea'; // Purple (fixed, not customizable)
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [primaryColor, setPrimaryColor] = useState(() => {
-    return localStorage.getItem('primaryColor') || DEFAULT_PRIMARY_COLOR;
+  const [primaryColor] = useState(() => {
+    // Always use default purple color - customization disabled
+    return DEFAULT_PRIMARY_COLOR;
   });
+  
+  // Disable color customization
+  const setPrimaryColor = (_color: string) => {
+    // Color customization disabled - primary color is fixed to purple
+  };
   
   const [logoUrl, setLogoUrl] = useState<string | null>(() => {
     return localStorage.getItem('logoUrl') || null;
   });
 
   useEffect(() => {
-    localStorage.setItem('primaryColor', primaryColor);
+    // Don't save to localStorage - color is fixed to purple
+    // localStorage.setItem('primaryColor', primaryColor);
     
     const shades = generateColorShades(primaryColor);
     const root = document.documentElement;
